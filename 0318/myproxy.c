@@ -59,38 +59,26 @@ void* workerThread(void* args){
     int sd = args2.sd;
     int client_sd = args2.client_sd;
  
-    //the following try to receive http request char by char...but failed, it will cause segmentation fault
- 
-    // char * buffer = (char *)malloc(sizeof(char) * 2);
-    // memset(buffer, 0, 2);
-    // char * temp = (char *)malloc(sizeof(char) * 1);
-    // int bufferSize = 2;
-    // while(1){
-    //     printf("haha1\n");
-    //     memset(temp, 0, 1);
-    //     printf("haha2\n");
-    //     int result = recv(client_sd, temp, 1, 0);
-    //     strncpy(buffer + bufferSize - 2, temp, 1);
-    //     printf("haha3\n");
-    //     if(strstr(buffer, "\r\n\r\n") != NULL){
-    //         break;
-    //     }
-    //     bufferSize++;
-    //     printf("haha4\n");
-    //     buffer = (char *) realloc(buffer, bufferSize);
-    //     printf("haha5\n");
-    // }
-    // temp = NULL;
-    // strncpy(buffer + bufferSize - 1, temp, 1);
-     
- 
     //receive the http request
+    // char * buffer = (char *)malloc(sizeof(char) * REQUEST_SIZE);
+    // memset(buffer, 0, REQUEST_SIZE);
+    //int result = recv(client_sd, buffer, REQUEST_SIZE, 0);
     char * buffer = (char *)malloc(sizeof(char) * REQUEST_SIZE);
     memset(buffer, 0, REQUEST_SIZE);
-    int result = recv(client_sd, buffer, REQUEST_SIZE, 0);
+    int result;
+    int n = 0;
+    while (result = recv(client_sd, &buffer[n], 1, 0)) {
+        if (n > 4 && strstr(buffer, "\r\n\r\n") != NULL) {
+            break;
+        }
+        n++;
+    }
+    buffer[n+1] = '\0';
+
     //Later when we split http request, we will change buffer, so we need to make a copy here
-    char * requestBuffer = (char *)malloc(sizeof(char) * (result + 1));
-    strncpy(requestBuffer, buffer, (result+1));
+    char * requestBuffer = (char *)malloc(sizeof(char) * (strlen(buffer)));
+    strncpy(requestBuffer, buffer, (strlen(buffer)));
+    printf("buffer length: %d\n", strlen(buffer));
     if(result < 0){
         close(client_sd);
         pthread_exit(NULL);
@@ -191,8 +179,15 @@ void* workerThread(void* args){
         if(connect(server_sd,(struct sockaddr*)&addr,sizeof(struct sockaddr_in)) < 0){
             printf("Error in connecting to remote server\n");
         }
+        //forward the http request to server
         result = send(server_sd, requestBuffer, strlen(requestBuffer), 0);
         printf("forward http request, size: %d\n", strlen(requestBuffer));
+        //receive the http response from server
+        memset(buffer, 0, REQUEST_SIZE);
+        result = recv(server_sd, buffer, REQUEST_SIZE, 0);
+        printf("++++++++++++++\n");
+        printf("%s", buffer);
+        printf("++++++++++++++\n");
         close(server_sd);
     }
  
