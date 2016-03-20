@@ -96,10 +96,13 @@ void* workerThread(void* args){
         n++;
     }
     buffer[n+1] = '\0';
+    result = n;
     //int result = recv(browser_sd, buffer, 1, 0);
     //Later when we split http request, we will change buffer, so we need to make a copy here
     char * requestBuffer = (char *)malloc(sizeof(char) * (result + 1));
     strncpy(requestBuffer, buffer, (result+1));
+    
+            printf("forward http request: %s\n", requestBuffer);
     if(result < 0){
         close(browser_sd);
         pthread_exit(NULL);
@@ -244,22 +247,23 @@ void* workerThread(void* args){
             printf("Connected to %s  IP - %s\n",firstLine[1], inet_ntoa(addr.sin_addr));
             result = send(server_sd, requestBuffer, strlen(requestBuffer), 0);
             printf("forward http request, size: %d\n", strlen(requestBuffer));
+            printf("forward http request: %s\n", requestBuffer);
         }
-        //memset(buffer, 0, REQUEST_SIZE);
-        memset(buffer, 0, REQUEST_SIZE);
-        if(subdir!=NULL)
-            sprintf(buffer,"GET %s %s\r\nHost: %s\r\nConnection: close\r\n\r\n",subdir,ptl,hostname);
-        else
-            sprintf(buffer,"GET / %s\r\nHost: %s\r\nConnection: close\r\n\r\n",ptl,hostname);
-        int res=send(server_sd, buffer, strlen(buffer), 0);
-        printf("\n%d\n", strlen(buffer));
         printf("\n%s\n", buffer);
-        if(res<0)
-            error("Error writing to socket");
-        else{
-            do {
-                memset(buffer, 0, REQUEST_SIZE);
-                res = recv(server_sd, buffer, REQUEST_SIZE, 0);
+        //memset(buffer, 0, REQUEST_SIZE);
+        // memset(buffer, 0, REQUEST_SIZE);
+        // if(subdir!=NULL)
+            // sprintf(buffer,"GET %s %s\r\nHost: %s\r\nConnection: close\r\n\r\n",subdir,ptl,hostname);
+        // else
+            // sprintf(buffer,"GET / %s\r\nHost: %s\r\nConnection: close\r\n\r\n",ptl,hostname);
+        // int res=send(server_sd, buffer, strlen(buffer), 0);
+        // printf("\n%d\n", strlen(buffer));
+        // if(res<0)
+            // error("Error writing to socket");
+        // else{
+            // do {
+                // memset(buffer, 0, REQUEST_SIZE);
+                // res = recv(server_sd, buffer, REQUEST_SIZE, 0);
                 
                 // char statCode[10];
                 // int keepAlive = 0;
@@ -291,10 +295,10 @@ void* workerThread(void* args){
                         // chunked = 1;
                     // }
                 // }
-                if(!(res<=0))
-                    send(browser_sd, buffer, res, 0);
-            }while(res>0);
-        }
+                // if(!(res<=0))
+                    // send(browser_sd, buffer, res, 0);
+            // }while(res>0);
+        // }
         close(server_sd);
         printf("Connection closed\n");
     }
