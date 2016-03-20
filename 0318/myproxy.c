@@ -8,6 +8,7 @@
 # include <netinet/in.h>
 # include <dirent.h>
 # include <pthread.h>
+# include <netdb.h>
  
 # define THREADNUM 100
 # define REQUEST_SIZE 8192
@@ -58,42 +59,34 @@ void* workerThread(void* args){
     int sd = args2.sd;
     int client_sd = args2.client_sd;
  
-    //the following try to receive http request char by char...but failed, it will cause segmentation fault
- 
-    // char * buffer = (char *)malloc(sizeof(char) * 2);
-    // memset(buffer, 0, 2);
-    // char * temp = (char *)malloc(sizeof(char) * 1);
-    // int bufferSize = 2;
-    // while(1){
-    //     printf("haha1\n");
-    //     memset(temp, 0, 1);
-    //     printf("haha2\n");
-    //     int result = recv(client_sd, temp, 1, 0);
-    //     strncpy(buffer + bufferSize - 2, temp, 1);
-    //     printf("haha3\n");
-    //     if(strstr(buffer, "\r\n\r\n") != NULL){
-    //         break;
-    //     }
-    //     bufferSize++;
-    //     printf("haha4\n");
-    //     buffer = (char *) realloc(buffer, bufferSize);
-    //     printf("haha5\n");
-    // }
-    // temp = NULL;
-    // strncpy(buffer + bufferSize - 1, temp, 1);
-     
- 
     //receive the http request
+    // char * buffer = (char *)malloc(sizeof(char) * REQUEST_SIZE);
+    // memset(buffer, 0, REQUEST_SIZE);
+    //int result = recv(client_sd, buffer, REQUEST_SIZE, 0);
     char * buffer = (char *)malloc(sizeof(char) * REQUEST_SIZE);
     memset(buffer, 0, REQUEST_SIZE);
-    int result = recv(client_sd, buffer, REQUEST_SIZE, 0);
-    printf("received http request, size: %d\n", result);
+    int result;
+    int n = 0;
+    while (result = recv(client_sd, &buffer[n], 1, 0)) {
+        if (n > 4 && strstr(buffer, "\r\n\r\n") != NULL) {
+            break;
+        }
+        n++;
+    }
+    buffer[n+1] = '\0';
+
+    //Later when we split http request, we will change buffer, so we need to make a copy here
+    char * requestBuffer = (char *)malloc(sizeof(char) * (strlen(buffer)));
+    strncpy(requestBuffer, buffer, (strlen(buffer)));
+    printf("buffer length: %d\n", strlen(buffer));
     if(result < 0){
         close(client_sd);
         pthread_exit(NULL);
         printf("received fail!\n");
         return 0;
     }
+    printf("~~~~~~~~~\n");
+    printf("The received http request header\n");
     printf("~~~~~~~~~\n");
     printf("%s", buffer);
     printf("~~~~~~~~~\n");
@@ -112,6 +105,7 @@ void* workerThread(void* args){
  
     //split the http request
     char ** lines = splitString(buffer, 0);
+
     int i = 0;
     while(lines[i] != NULL){
         //get the first line of http request, get the request url
@@ -174,20 +168,30 @@ void* workerThread(void* args){
     struct hostent *hp;
     struct sockaddr_in addr;
     hp = gethostbyname(hostLine[1]);
+    struct in_addr ** addr_list = (struct in_addr **)hp->h_addr_list;
+    //printf("ip addr: %s\n", inet_ntoa(*addr_list[0]));
     memset(&addr,0,sizeof(addr));
-    bcopy(hp->h_addr, &addr.sin_addr.s_addr, hp->h_length);
     addr.sin_family=AF_INET;
-    addr.sin_addr.s_addr=inet_addr(hp->h_addr);
+    addr.sin_addr.s_addr=inet_addr(inet_ntoa(*addr_list[0]));
     addr.sin_port=htons(80);
     // set a socket to communicate to remote server
-    int server_sd = socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);
+    int server_sd = socket(AF_INET,SOCK_STREAM,0);
     // Requested object isn't cached on the proxy, so pass the request to web server.
     if (existCache == 0){
-        if(connect(server_sd,(struct sockaddr*)&addr,sizeof(struct addr)) < 0){
-            printf("Error in connecting to remote server");
+        if(connect(server_sd,(struct sockaddr*)&addr,sizeof(struct sockaddr_in)) < 0){
+            printf("Error in connecting to remote server\n");
         }
-        result = send(server_sd, buffer, strlen(buffer));
-        printf("forward http request, size: %d\n", result);
+        //forward the http request to server
+        result = send(server_sd, requestBuffer, strlen(requestBuffer), 0);
+        printf("the size of forward http request: %d\n", strlen(requestBuffer));
+        //receive the http response from server
+        memset(buffer, 0, REQUEST_SIZE);
+        result = recv(server_sd, buffer, REQUEST_SIZE, 0);
+        printf("++++++++++++++\n");
+        printf("Print out the http response header\n");
+        printf("++++++++++++++\n");
+        printf("%s", buffer);
+        printf("++++++++++++++\n");
         close(server_sd);
     }
  
@@ -198,6 +202,7 @@ void* workerThread(void* args){
  
     free(lines);
     free(buffer);
+    free(requestBuffer);
     //printf("Haha successful connection!\n");
  
      
