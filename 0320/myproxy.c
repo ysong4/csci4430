@@ -9,7 +9,10 @@
 # include <dirent.h>
 # include <pthread.h>
 # include <netdb.h>
- 
+# include <sys/stat.h>
+# include <crypt.h>
+
+
 # define THREADNUM 100
 # define REQUEST_SIZE 8192
  
@@ -58,38 +61,19 @@ void* workerThread(void* args){
     struct arguement args2 = *args_p;
     int proxy_sd = args2.sd;
     int browser_sd = args2.browser_sd;
- 
-    //the following try to receive http request char by char...but failed, it will cause segmentation fault
- 
-    // char * buffer = (char *)malloc(sizeof(char) * 2);
-    // memset(buffer, 0, 2);
-    // char * temp = (char *)malloc(sizeof(char) * 1);
-    // int bufferSize = 2;
-    // while(1){
-    //     printf("haha1\n");
-    //     memset(temp, 0, 1);
-    //     printf("haha2\n");
-    //     int result = recv(browser_sd, temp, 1, 0);
-    //     strncpy(buffer + bufferSize - 2, temp, 1);
-    //     printf("haha3\n");
-    //     if(strstr(buffer, "\r\n\r\n") != NULL){
-    //         break;
-    //     }
-    //     bufferSize++;
-    //     printf("haha4\n");
-    //     buffer = (char *) realloc(buffer, bufferSize);
-    //     printf("haha5\n");
-    // }
-    // temp = NULL;
-    // strncpy(buffer + bufferSize - 1, temp, 1);
-     
- 
+
     //receive the http request
     char buffer[REQUEST_SIZE]; //= (char *)malloc(sizeof(char) * REQUEST_SIZE);
+    char bufferCopy[REQUEST_SIZE];
     memset(buffer, 0, REQUEST_SIZE);
     int result;
     int n = 0;
     while (result = recv(browser_sd, &buffer[n], 1, 0)) { // receive byte by byte
+        if(result < 0){
+            close(browser_sd);
+            printf("received fail!\n");
+            pthread_exit(NULL);
+        }
         if (n > 4 && strstr(buffer, "\r\n\r\n") != NULL) {
             break;
         }
@@ -97,21 +81,9 @@ void* workerThread(void* args){
     }
     buffer[n+1] = '\0';
     result = n;
-    //int result = recv(browser_sd, buffer, 1, 0);
     //Later when we split http request, we will change buffer, so we need to make a copy here
     char * requestBuffer = (char *)malloc(sizeof(char) * (result + 1));
     strncpy(requestBuffer, buffer, (result+1));
-    
-            printf("forward http request: %s\n", requestBuffer);
-    if(result < 0){
-        close(browser_sd);
-        pthread_exit(NULL);
-        printf("received fail!\n");
-        return 0;
-    }
-    // printf("~~~~~~~~~\n");
-    // printf("%s", buffer);
-    // printf("~~~~~~~~~\n");
  
     //check the existence of IFS in http request
     int haveIfs = 0;
@@ -140,11 +112,6 @@ void* workerThread(void* args){
         if (i == 0){
             firstLine = splitString(lines[i], 1);
             //requested object will be in firstLine[1]
-            // int j = 0;
-            // while(firstLine[j] != NULL){
-                // printf("------\n%d\t%s\n", j,firstLine[j]);
-                // j++;
-            // }
             memset(url, 0, 256);
             strcpy(url, firstLine[1]);
             memset(subdir, 0, 256);
@@ -176,49 +143,26 @@ void* workerThread(void* args){
                 memset(objectType, 0, 10);
                 strcpy(objectType, token);
             }
-            printf("subdir: %s---\n", subdir);
-            printf("obj: %s---\n", objectType);
         }
         //get the host name from http request
         if (strstr(lines[i], "Host") != NULL){
             hostLine = splitString(lines[i], 1);
             memset(hostname, 0, 256);
             strcpy(hostname, hostLine[1]);
-            //hostname will be in hostLine[1]
-            // int j = 0;
-            // while(hostLine[j] != NULL){
-                // printf("------\n%d\t%s\n",j, hostLine[j]);
-                // j++;
-            // }
         }
         //check whether http request has a cache-control
         if (strstr(lines[i], "Cache-Control") != NULL){
             haveCache = 1;
             cacheLine = splitString(lines[i], 1);
-            // int j = 0;
-            // while(cacheLine[j] != NULL){
-                // printf("------\n%s\n", cacheLine[j]);
-                // j++;
-            // }
         }
         //check whether http request has a If-Modified-Since
         if (strstr(lines[i], "If-Modified-Since") != NULL){
             haveIfs = 1;
             ifsLine = splitString(lines[i], 1);
-            // int j = 0;
-            // while(ifsLine[j] != NULL){
-                // printf("------\n%s\n", ifsLine[j]);
-                // j++;
-            // }
         }
         //check whether http request has a proxy-connection
         if (strstr(lines[i], "Proxy-Connection") != NULL){
             proxyLine = splitString(lines[i], 1);
-            // int j = 0;
-            // while(proxyLine[j] != NULL){
-                // printf("------\n%s\n", proxyLine[j]);
-                // j++;
-            // }
         }
         i++;
     }
@@ -231,11 +175,9 @@ void* workerThread(void* args){
     struct sockaddr_in addr;
     hp = gethostbyname(hostLine[1]);
     struct in_addr ** addr_list = (struct in_addr **)hp->h_addr_list;
-    //printf("ip addr: %s\n", inet_ntoa(*addr_list[0]));
     memset(&addr,0,sizeof(addr));
     addr.sin_family=AF_INET;
     addr.sin_addr.s_addr=inet_addr(inet_ntoa(*addr_list[0]));
-    //bcopy((char*)hp->h_addr,(char*)&addr.sin_addr.s_addr,hp->h_length);
     addr.sin_port=htons(80);
     // set a socket to communicate to remote server
     int server_sd = socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);
@@ -245,60 +187,126 @@ void* workerThread(void* args){
             printf("Error in connecting to remote server\n");
         } else {
             printf("Connected to %s  IP - %s\n",firstLine[1], inet_ntoa(addr.sin_addr));
-            result = send(server_sd, requestBuffer, strlen(requestBuffer), 0);
             printf("forward http request, size: %d\n", strlen(requestBuffer));
-            printf("forward http request: %s\n", requestBuffer);
         }
+        memset(buffer, 0, REQUEST_SIZE);
+        strcpy(buffer, requestBuffer);
         printf("\n%s\n", buffer);
-        //memset(buffer, 0, REQUEST_SIZE);
-        // memset(buffer, 0, REQUEST_SIZE);
-        // if(subdir!=NULL)
-            // sprintf(buffer,"GET %s %s\r\nHost: %s\r\nConnection: close\r\n\r\n",subdir,ptl,hostname);
-        // else
-            // sprintf(buffer,"GET / %s\r\nHost: %s\r\nConnection: close\r\n\r\n",ptl,hostname);
-        // int res=send(server_sd, buffer, strlen(buffer), 0);
-        // printf("\n%d\n", strlen(buffer));
-        // if(res<0)
-            // error("Error writing to socket");
-        // else{
-            // do {
-                // memset(buffer, 0, REQUEST_SIZE);
-                // res = recv(server_sd, buffer, REQUEST_SIZE, 0);
+        int res=send(server_sd, buffer, strlen(buffer), 0);
+        printf("\n%d\n", strlen(buffer));
+        if(res<0)
+            error("Error writing to socket");
+        else{
+            do {
+                memset(buffer, 0, REQUEST_SIZE);
+                int n = 0;
+                while (res = recv(server_sd, &buffer[n], 1, 0)) { // receive byte by byte
+                    if (n > 4 && strstr(buffer, "\r\n\r\n") != NULL) {
+                        break;
+                    }
+                    n++;
+                }
+                buffer[n+1] = '\0';
+                res = n;
                 
-                // char statCode[10];
-                // int keepAlive = 0;
-                // int chunked = 0;
-                // int contLen = -1;
-                // char filename[23];
+                char statCode[10];
+                int keepAlive = 0;
+                int chunked = 0;
+                int contLen = -1;
+                char filename[23];
                 
-                // printf("%s\n", buffer);
-                // lines = splitString(buffer, 0);
+                memset(bufferCopy, 0, REQUEST_SIZE);
+                strcpy(bufferCopy, buffer);
+                lines = splitString(buffer, 0);
                 
-                // int i = 0;
-                // while(lines[i] != NULL){
-                    // printf("%d\t%s\n",i, lines[i]);
-                    //get the first line of http request, get the request url
-                    // char **line = splitString(lines[i], 1);
-                    // if (i == 0 && line[1]){
-                        // memset(statCode, 0, 10);
-                        // printf("%s\n", line[1]);
-                        // strcpy(statCode, line[1]);
-                    // }
-                    //get the host name from http request
-                    // if (strstr(lines[i], "Content-Length") != NULL){
-                        // contLen = strtol(line[1], NULL, 10);
-                    // }
-                    // if (strstr(lines[i], "keep-alive") != NULL){
-                        // keepAlive = 1;
-                    // }
-                    // if (strstr(lines[i], "chunked") != NULL){
-                        // chunked = 1;
-                    // }
-                // }
-                // if(!(res<=0))
-                    // send(browser_sd, buffer, res, 0);
-            // }while(res>0);
-        // }
+                int i = 0;
+                while(lines[i] != NULL){
+                    printf("%d\t%s\n",i, lines[i]);
+                    char **line = splitString(lines[i], 1);
+                    if (i == 0 && line[1]){
+                        memset(statCode, 0, 10);
+                        strcpy(statCode, line[1]);
+                    }
+                    if (strstr(lines[i], "Content-Length") != NULL){
+                        contLen = strtol(line[1], NULL, 10);
+                        printf("%d\t%d\n",i, contLen);
+                    }
+                    if (strstr(lines[i], "keep-alive") != NULL){
+                        keepAlive = 1;
+                    }
+                    if (strstr(lines[i], "chunked") != NULL){
+                        chunked = 1;
+                    }
+                    i++;
+                }
+                // send http response header to browser
+                if(!(res<=0))
+                    send(browser_sd, bufferCopy, res, 0);
+                // get the file name put into cache
+                strncpy(filename, (char *)(crypt(url, "$1$00$")+6), 23);
+                for (i=0; i<22; ++i){
+                    if (filename[i] == '/'){
+                        filename[i] = '_';
+                    }
+                }
+
+                struct stat st = {0};
+
+                if (stat("./proxyFiles", &st) == -1){
+                    mkdir("./proxyFiles", 0777);
+                }
+
+                char partOne[] = "./proxyFiles/";
+                char * dirName;
+                int fileExist = 0;
+                
+                dirName = malloc((strlen(partOne)+ strlen(filename))* sizeof(char));
+                dirName = strcat(partOne, filename);
+                if (stat(dirName, &st) == -1){
+                    fileExist = 0;
+                } else {
+                    fileExist = 1;
+                }
+
+                printf("%s\n", dirName);
+                // receive web object from server
+                char* data = malloc(sizeof(char) * 512);
+                memset(data, 0, 512);
+                FILE *fp = fopen(dirName, "wb");
+                //fprintf(fp, data);
+                int blockSize = 0;
+                while((blockSize = recv(server_sd, data, 512, 0)) > 0) 
+                {
+                    int writeSize = fwrite(data, sizeof(char), blockSize, fp);
+                    if(writeSize < blockSize)
+                    {
+                        perror("File write failed on server.\n");
+                    }
+                    bzero(data, 512);
+                    contLen -= blockSize;
+                    if (contLen <= 0) 
+                    {
+                        break;
+                    }
+                }
+                if(blockSize < 0)
+                {
+                    if (errno == EAGAIN)
+                    {
+                        printf("recv() timed out.\n");
+                    }
+                    else
+                    {
+                        fprintf(stderr, "recv() failed due to errno = %d\n", errno);
+                        exit(1);
+                    }
+                }
+                fclose(fp);
+                
+                if(!(res<=0))
+                    send(browser_sd, buffer, res, 0);
+            }while(res>0);
+        }
         close(server_sd);
         printf("Connection closed\n");
     }
