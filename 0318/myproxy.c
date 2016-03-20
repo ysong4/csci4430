@@ -86,6 +86,8 @@ void* workerThread(void* args){
         return 0;
     }
     printf("~~~~~~~~~\n");
+    printf("The received http request header\n");
+    printf("~~~~~~~~~\n");
     printf("%s", buffer);
     printf("~~~~~~~~~\n");
  
@@ -181,10 +183,12 @@ void* workerThread(void* args){
         }
         //forward the http request to server
         result = send(server_sd, requestBuffer, strlen(requestBuffer), 0);
-        printf("forward http request, size: %d\n", strlen(requestBuffer));
+        printf("the size of forward http request: %d\n", strlen(requestBuffer));
         //receive the http response from server
         memset(buffer, 0, REQUEST_SIZE);
         result = recv(server_sd, buffer, REQUEST_SIZE, 0);
+        printf("++++++++++++++\n");
+        printf("Print out the http response header\n");
         printf("++++++++++++++\n");
         printf("%s", buffer);
         printf("++++++++++++++\n");
