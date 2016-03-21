@@ -69,11 +69,6 @@ void* workerThread(void* args){
     int result;
     int n = 0;
     while (result = recv(browser_sd, &buffer[n], 1, 0)) { // receive byte by byte
-        if(result < 0){
-            close(browser_sd);
-            printf("received fail!\n");
-            pthread_exit(NULL);
-        }
         if (n > 4 && strstr(buffer, "\r\n\r\n") != NULL) {
             break;
         }
@@ -81,6 +76,11 @@ void* workerThread(void* args){
     }
     buffer[n+1] = '\0';
     result = n;
+        if(result < 0){
+            close(browser_sd);
+            printf("received fail!\n");
+            pthread_exit(NULL);
+        }
     //Later when we split http request, we will change buffer, so we need to make a copy here
     char * requestBuffer = (char *)malloc(sizeof(char) * (result + 1));
     strncpy(requestBuffer, buffer, (result+1));
@@ -113,16 +113,19 @@ void* workerThread(void* args){
             firstLine = splitString(lines[i], 1);
             //requested object will be in firstLine[1]
             memset(url, 0, 256);
+            char temp0[256];
+            memset(temp0, 0, 256);
             strcpy(url, firstLine[1]);
+            strcpy(temp0, firstLine[1]);
             memset(subdir, 0, 256);
             char *token;
             char temp[256];
             
-            if (strstr(url, "//") != NULL){
-                token = strtok(url, "//");
+            if (strstr(temp, "//") != NULL){
+                token = strtok(temp0, "//");
                 token = strtok(NULL, "//");
             } else {
-                token = strtok(url, "/");
+                token = strtok(temp0, "/");
             }
             token = strtok(NULL, "/");
             while( token != NULL ) 
@@ -193,11 +196,11 @@ void* workerThread(void* args){
         strcpy(buffer, requestBuffer);
         printf("\n%s\n", buffer);
         int res=send(server_sd, buffer, strlen(buffer), 0);
-        printf("\n%d\n", strlen(buffer));
+        //printf("\n%d\n", strlen(buffer));
         if(res<0)
             error("Error writing to socket");
         else{
-            do {
+            
                 memset(buffer, 0, REQUEST_SIZE);
                 int n = 0;
                 while (res = recv(server_sd, &buffer[n], 1, 0)) { // receive byte by byte
@@ -207,6 +210,7 @@ void* workerThread(void* args){
                     n++;
                 }
                 buffer[n+1] = '\0';
+                printf("%s\n", buffer);
                 res = n;
                 
                 char statCode[10];
@@ -239,73 +243,107 @@ void* workerThread(void* args){
                     }
                     i++;
                 }
-                // send http response header to browser
-                if(!(res<=0))
-                    send(browser_sd, bufferCopy, res, 0);
-                // get the file name put into cache
-                strncpy(filename, (char *)(crypt(url, "$1$00$")+6), 23);
-                for (i=0; i<22; ++i){
-                    if (filename[i] == '/'){
-                        filename[i] = '_';
+                if (strstr(statCode, "200") != NULL) {
+                    // send http response header to browser
+                    if(!(res<=0))
+                        send(browser_sd, bufferCopy, res, 0);
+                    // get the file name put into cache
+                    printf("url: %s\n", url);
+                    strncpy(filename, (char *)(crypt(url, "$1$00$")+6), 23);
+                    for (i=0; i<22; ++i){
+                        if (filename[i] == '/'){
+                            filename[i] = '_';
+                        }
                     }
-                }
 
-                struct stat st = {0};
+                    struct stat st = {0};
 
-                if (stat("./proxyFiles", &st) == -1){
-                    mkdir("./proxyFiles", 0777);
-                }
+                    if (stat("./proxyFiles", &st) == -1){
+                        mkdir("./proxyFiles", 0777);
+                    }
+                    printf("2\t%d\n", contLen);
 
-                char partOne[] = "./proxyFiles/";
-                char * dirName;
-                int fileExist = 0;
-                
-                dirName = malloc((strlen(partOne)+ strlen(filename))* sizeof(char));
-                dirName = strcat(partOne, filename);
-                if (stat(dirName, &st) == -1){
-                    fileExist = 0;
+                    char partOne[] = "./proxyFiles/";
+                    char * dirName;
+                    int fileExist = 0;
+                    
+                    dirName = malloc((strlen(partOne)+ strlen(filename))* sizeof(char));
+                    dirName = strcat(partOne, filename);
+                    if (stat(dirName, &st) == -1){
+                        fileExist = 0;
+                    } else {
+                        fileExist = 1;
+                        //remove(dirName);
+                    }
+
+                    printf("%s\n", dirName);
+                    // file header and write it in file, chunked or not
+                    char* fileHeader = malloc(512);
+                    memset(fileHeader, 0, 512);
+                    printf("3\t%d\n", contLen);
+                    if (contLen != -1) {
+                        sprintf(fileHeader, "HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n", contLen);
+                    } else {
+                        sprintf(fileHeader, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n");
+                    }
+                    
+                    // receive web object from server
+                    char* data = malloc(sizeof(char) * 512);
+                    memset(data, 0, 512);
+                    FILE *fp = fopen(dirName, "wb");
+                    fwrite(fileHeader, sizeof(char), strlen(fileHeader), fp);
+                    //fprintf(fp, "lllllllllll");
+                    int blockSize = 0;
+                    while((blockSize = recv(server_sd, data, 512, 0)) > 0) 
+                    {
+                        // send content to browser
+                        //printf("ee: %s\n", data);
+                        if(!(blockSize<=0))
+                            send(browser_sd, data, blockSize, 0);
+                        int writeSize = fwrite(data, sizeof(char), blockSize, fp);
+                        //int writeSize = fprintf(fp, data);
+                        if(writeSize < blockSize)
+                        {
+                            perror("File write failed on server.\n");
+                        }
+                        bzero(data, 512);
+                        contLen -= blockSize;
+                        if (contLen <= 0)
+                        {
+                            break;
+                        }
+                    }
+                    printf("contLen: %d\n", contLen);
+                    if(blockSize < 0)
+                    {
+                        if (errno == EAGAIN)
+                        {
+                            printf("recv() timed out.\n");
+                        }
+                        else
+                        {
+                            fprintf(stderr, "recv() failed due to errno = %d\n", errno);
+                            exit(1);
+                        }
+                    }
+                    fclose(fp);
+                } else if (strstr(statCode, "304") != NULL) {
+                    
                 } else {
-                    fileExist = 1;
-                }
-
-                printf("%s\n", dirName);
-                // receive web object from server
-                char* data = malloc(sizeof(char) * 512);
-                memset(data, 0, 512);
-                FILE *fp = fopen(dirName, "wb");
-                //fprintf(fp, data);
-                int blockSize = 0;
-                while((blockSize = recv(server_sd, data, 512, 0)) > 0) 
-                {
-                    int writeSize = fwrite(data, sizeof(char), blockSize, fp);
-                    if(writeSize < blockSize)
-                    {
-                        perror("File write failed on server.\n");
-                    }
-                    bzero(data, 512);
-                    contLen -= blockSize;
-                    if (contLen <= 0) 
-                    {
-                        break;
+                    // send http response header to browser
+                    res = send(browser_sd, bufferCopy, strlen(bufferCopy), 0);
+                    printf("\n%s\n",buffer);
+                    if(res<0)
+                        error("Error writing to socket");
+                    else{
+                        do {
+                            bzero((char*)buffer,500);
+                            res=recv(server_sd,buffer,500,0);
+                            if(!(res<=0))
+                                send(browser_sd,buffer,res,0);
+                        }while(res>0);
                     }
                 }
-                if(blockSize < 0)
-                {
-                    if (errno == EAGAIN)
-                    {
-                        printf("recv() timed out.\n");
-                    }
-                    else
-                    {
-                        fprintf(stderr, "recv() failed due to errno = %d\n", errno);
-                        exit(1);
-                    }
-                }
-                fclose(fp);
-                
-                if(!(res<=0))
-                    send(browser_sd, buffer, res, 0);
-            }while(res>0);
         }
         close(server_sd);
         printf("Connection closed\n");
