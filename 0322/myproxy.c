@@ -71,28 +71,42 @@ void* workerThread(void* args){
     int server_sd;
 
     while(1){
-        memset(buffer, 0, REQUEST_SIZE);
+        
         //receive the http request
         int result;
-        int n = 0;
-        while (1) { // receive byte by byte
-            result = recv(browser_sd, &buffer[n], 1, 0);
-            if (result < 0){
-                error("Error in receiving HTTP request!");
-                break;
-            }
-            if (n > 4 && strstr(buffer, "\r\n\r\n") != NULL) {
-                break;
-            }
-            n++;
+        memset(buffer, 0, REQUEST_SIZE);
+        result = recv(browser_sd, buffer, REQUEST_SIZE, 0);
+        if (result == 0){
+            continue;
         }
-        buffer[n+1] = '\0';
-        result = n;
+        printf("received http request, size: %d\n", result);
         if(result < 0){
             close(browser_sd);
             printf("received fail!\n");
             pthread_exit(NULL);
         }
+        //int n = 0; 
+        //while (1) { // receive byte by byte
+            // result = recv(browser_sd, &buffer[n], 1, 0);
+            // if (n<10){
+                // printf("id[%d]\tbuffer: %s\n", id, buffer);
+            // }
+            // if (result < 0){
+                // perror("Error in receiving HTTP request!");
+                // break;
+            // }
+            // if (n > 4 && strstr(buffer, "\r\n\r\n") != NULL) {
+                // break;
+            // }
+            // n++;
+        // }
+        // buffer[n+1] = '\0';
+        // result = n;
+        // if(result < 0){
+            // close(browser_sd);
+            // printf("received fail!\n");
+            // pthread_exit(NULL);
+        // }
         //Later when we split http request, we will change buffer, so we need to make a copy here
         // char * requestBuffer = (char *)malloc(sizeof(char) * (result + 1));
         // strncpy(requestBuffer, buffer, (result+1));
@@ -218,7 +232,7 @@ void* workerThread(void* args){
                         memset(block, 0, 512);
                         readSize = fread(block, sizeof(char), 512, fp);
                         if(!(readSize<=0))
-                            send(browser_sd, block, readSize, 0);
+                            send(browser_sd, block, readSize, MSG_NOSIGNAL);
                     }while(readSize > 0);
                     fclose(fp);
                 }
@@ -246,19 +260,24 @@ void* workerThread(void* args){
         }
 
         
-        struct hostent *hp;
-        struct sockaddr_in addr;
-        hp = gethostbyname(hostLine[1]);
-        struct in_addr ** addr_list = (struct in_addr **)hp->h_addr_list;
-        memset(&addr,0,sizeof(addr));
-        addr.sin_family=AF_INET;
-        addr.sin_addr.s_addr=inet_addr(inet_ntoa(*addr_list[0]));
-        addr.sin_port=htons(80);
-        // set a socket to communicate to remote server
-        server_sd = socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);
+        
         // Requested object isn't cached on the proxy, so pass the request to web server.
         if (existCache == 0){
             if (checkServerConnection == 0){
+                struct hostent *hp;
+                struct sockaddr_in addr;
+                hp = gethostbyname(hostLine[1]);
+                struct in_addr ** addr_list = (struct in_addr **)hp->h_addr_list;
+                memset(&addr,0,sizeof(addr));
+                addr.sin_family=AF_INET;
+                addr.sin_addr.s_addr=inet_addr(inet_ntoa(*addr_list[0]));
+                addr.sin_port=htons(80);
+                // set a socket to communicate to remote server
+                server_sd = socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);
+                // if (server_sd < 0) {
+                    // perror("socket()");
+                    // exit(1);
+                // }
                 if(connect(server_sd,(struct sockaddr*)&addr,sizeof(struct sockaddr_in)) < 0){
                     printf("Error in connecting to remote server\n");
                 } else {
@@ -270,18 +289,19 @@ void* workerThread(void* args){
             memset(buffer, 0, REQUEST_SIZE);
             strcpy(buffer, bufferCopy);
             //printf("\n%s\n", buffer);
-            int res = send(server_sd, buffer, strlen(buffer), 0);
+            int res = send(server_sd, buffer, strlen(buffer), MSG_NOSIGNAL);
             //printf("\n%d\n", strlen(buffer));
             if(res<0){
-                error("Error in sending HTTP request to server");
+                perror("Error in sending HTTP request to server");
             }
             else{
                 memset(buffer, 0, REQUEST_SIZE);
                 int n = 0;
+                printf("1111\n");
                 while (1) { // receive byte by byte
                     res = recv(server_sd, &buffer[n], 1, 0);
                     if (res < 0){
-                        error("Error in receiving HTTP response!");
+                        perror("Error in receiving HTTP response!");
                         break;
                     }
                     if (n > 4 && strstr(buffer, "\r\n\r\n") != NULL) {
@@ -378,7 +398,7 @@ void* workerThread(void* args){
                         sprintf(fileHeader, bufferCopy);
                     }
                     // send http response header to browser
-                    res = send(browser_sd, bufferCopy, strlen(bufferCopy), 0);
+                    res = send(browser_sd, bufferCopy, strlen(bufferCopy), MSG_NOSIGNAL);
                     // receive web object from server and send to browser
                     char* block = malloc(sizeof(char) * 512);
                     memset(block, 0, 512);
@@ -387,13 +407,14 @@ void* workerThread(void* args){
                     int blockSize = 0;
                     
                     if(res<0)
-                        error("Error writing to socket");
+                        perror("Error writing to socket");
                     else{
+                printf("2222\n");
                         do {
                             memset(block, 0, 512);
                             blockSize = recv(server_sd,block,512,0);
                             if(blockSize >= 0)
-                                send(browser_sd,block,blockSize,0);
+                                send(browser_sd,block,blockSize,MSG_NOSIGNAL);
                             int writeSize = fwrite(block, sizeof(char), blockSize, fp);
                             if(writeSize < blockSize)
                             {
@@ -436,24 +457,25 @@ void* workerThread(void* args){
                                 memset(block, 0, 512);
                                 readSize = fread(block, sizeof(char), 512, fp);
                                 if(!(readSize<=0))
-                                    send(browser_sd, block, readSize, 0);
+                                    send(browser_sd, block, readSize, MSG_NOSIGNAL);
                             }while(readSize > 0);
                             fclose(fp);
                         }
                     }
                 } else { // transfer data from server directly to browser
                     // send http response header to browser
-                    res = send(browser_sd, bufferCopy, strlen(bufferCopy), 0);
+                    res = send(browser_sd, bufferCopy, strlen(bufferCopy), MSG_NOSIGNAL);
                     //printf("\n%s\n",buffer);
                     char block[512];
                     if(res<0)
-                        error("Error writing to socket");
+                        perror("Error writing to socket");
                     else{
+                printf("3333\n");
                         do {
                             memset(block, 0, 512);
                             res=recv(server_sd,block,512,0);
                             if(!(res<=0))
-                                send(browser_sd,block,res,0);
+                                send(browser_sd,block,res,MSG_NOSIGNAL);
                         }while(res>0);
                     }
                 }
