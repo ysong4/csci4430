@@ -15,7 +15,7 @@
 # include <stdbool.h> // for boolean
 # include <time.h> // for struct tm
 
-
+#define _GNU_SOURCE
 # define THREADNUM 100
 # define REQUEST_SIZE 8192
  
@@ -117,6 +117,8 @@ void* workerThread(void* args){
     int id = args2.id;
     char buffer[REQUEST_SIZE]; //= (char *)malloc(sizeof(char) * REQUEST_SIZE);
     char bufferCopy[REQUEST_SIZE];
+    char bufferAnother[REQUEST_SIZE];
+    char newRequestBuffer[REQUEST_SIZE];
 
     int checkServerConnection = 0;
     int server_sd;
@@ -138,6 +140,7 @@ void* workerThread(void* args){
         }
         memset(bufferCopy, 0, REQUEST_SIZE);
         strcpy(bufferCopy, buffer);
+        strcpy(bufferAnother, buffer);
         printf("that's the request i got: id is [%d]\n%s", id, buffer);
      
         //check the existence of IMS in http request
@@ -293,8 +296,37 @@ void* workerThread(void* args){
                 continue;            }
             if(haveIMS == 0 && haveCache == 1){
                 caseType = 3;
+                char ** headerlines = splitString(bufferAnother, 0);
+            
+                struct tm* mytm;
+                char mydatestring[256];
+                char IMSconcat[256] = "If-Modified-Since: ";
+                char * tmpline;
+
+                stat(dirName, &st);
+                mytm = gmtime(&st.st_mtime);
+                strftime(mydatestring, sizeof(mydatestring), "%a, %d %b %Y %X %Z", mytm); 
+                tmpline = strcat(IMSconcat, mydatestring);
+                int b = 1;
+
+                memset(newRequestBuffer, 0, REQUEST_SIZE);
+                strcpy(newRequestBuffer, headerlines[0]);
+                strcat(newRequestBuffer, "\r\n");
+
+                while(headerlines[b] != NULL){
+                    strcat(newRequestBuffer, headerlines[b]);
+                    strcat(newRequestBuffer, "\r\n");
+                    b++;
+                }
+                strcat(newRequestBuffer, tmpline);
+                strcat(newRequestBuffer, "\r\n");
+                strcat(newRequestBuffer, "\r\n");
+
+
+                printf("%s", newRequestBuffer);
+                strcpy(bufferCopy, newRequestBuffer);
+                existCache = 0;
                 printf("~~~~~~Now the third case.\n");
-                continue;
             }
             if(haveIMS == 1 && haveCache == 1){
                 caseType = 4;
