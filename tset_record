@@ -1,0 +1,26 @@
+4430 asgn2 test record
+
+http://course.cse.cuhk.edu.hk/~csci4430/tut/tuto5.pdf
+and most of pdf file on course page
+failed 1 in 10 shift or not
+http://www.cse.cuhk.edu.hk/~hrgao4/test.html
+ok
+http://www.cse.cuhk.edu.hk/v7/en/about/index.html
+cannot open
+http://course.cse.cuhk.edu.hk/~csci4430/
+cannot open fully, sometime send a url without type and response file type is html? how to handle?
+(i have asked on facebook)
+http://course.cse.cuhk.edu.hk/~csci4430/lec.html
+ok
+http://appsrv.cse.cuhk.edu.hk/~hrgao4/lang.jpg
+ok
+http://appsrv.cse.cuhk.edu.hk/~hrgao4/index.txt
+ok
+http://appsrv.cse.cuhk.edu.hk/~hrgao4/short.pdf
+ok
+http://appsrv.cse.cuhk.edu.hk/~hrgao4/gisss.gif
+ok
+
+Didn't test the chunked yet.
+
+Remember to remove all the debug printings before submit.....
