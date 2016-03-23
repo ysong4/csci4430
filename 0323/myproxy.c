@@ -1,4 +1,5 @@
-# define _XOPEN_SOURCE 
+# define _XOPEN_SOURCE
+# define _GNU_SOURCE
 # include <stdio.h>
 # include <stdlib.h>
 # include <unistd.h>
@@ -15,7 +16,7 @@
 # include <stdbool.h> // for boolean
 # include <time.h> // for struct tm
 
-#define _GNU_SOURCE
+
 # define THREADNUM 100
 # define REQUEST_SIZE 8192
  
@@ -87,10 +88,10 @@ bool compareName(char* fileName, char* inDate){
     tm = gmtime(&st.st_mtime);
     strftime(datestring, sizeof(datestring), "%a, %d %b %Y %X %Z", tm); 
 
-    //printf("%s\n",datestring);
+    // printf("%s\n",datestring);
     tm1 = *tm;
     strptime(inDate, "%a, %d %b %Y %X %Z", &tm2);
-    //printf("%s\n", inDate);
+    // printf("%s\n", inDate);
 
     time1 = mktime(&tm1);
     time2 = mktime(&tm2);
@@ -240,7 +241,10 @@ void* workerThread(void* args){
         }
         // int existCache = 0;
         // char *dirName;
-        
+
+        haveIMS = 1;
+        haveCache = 1;
+        existCache = 1;
         // the request have already cached on the proxy
         int caseType = 0;
         if(existCache == 1 && supportedFileType == 1){
@@ -268,9 +272,7 @@ void* workerThread(void* args){
                     pthread_mutex_unlock(&mutex);
                 }
                 continue;
-
-            }
-            if(haveIMS == 1 && haveCache == 0){
+            }else if(haveIMS == 1 && haveCache == 0){
                 caseType = 2;
                 printf("~~~~~~Now the second case.\n");
                 //bool checkNeedModified = compareName(dirName, IMS);
@@ -293,8 +295,9 @@ void* workerThread(void* args){
                     send(browser_sd, responseHeader, 256, MSG_NOSIGNAL);
                     printf("haha+++++++++++++finished sending 304 response!\n");
                 }
-                continue;            }
-            if(haveIMS == 0 && haveCache == 1){
+                continue;            
+            }else if(haveIMS == 0 && haveCache == 1){
+                printf("~~~~~~Now the third case.\n");
                 caseType = 3;
                 char ** headerlines = splitString(bufferAnother, 0);
             
@@ -322,16 +325,63 @@ void* workerThread(void* args){
                 strcat(newRequestBuffer, "\r\n");
                 strcat(newRequestBuffer, "\r\n");
 
-
                 printf("%s", newRequestBuffer);
                 strcpy(bufferCopy, newRequestBuffer);
+
+                haveIMS = 1;
                 existCache = 0;
-                printf("~~~~~~Now the third case.\n");
-            }
-            if(haveIMS == 1 && haveCache == 1){
-                caseType = 4;
+            }else if(haveIMS == 1 && haveCache == 1){
                 printf("~~~~~~Now the fourth case.\n");
-                continue;
+                caseType = 4;
+
+                char ** headerlines = splitString(bufferAnother, 0);
+            
+                struct tm* tmbaby;
+                char mydatestring[256];
+                char IMSconcat[256] = "If-Modified-Since: ";
+                char * tmpline;
+                bool IMSboolean;
+                int b = 0;
+
+                stat(dirName, &st);
+                tmbaby = gmtime(&st.st_mtime);
+                strftime(mydatestring, sizeof(mydatestring), "%a, %d %b %Y %X %Z", tmbaby); 
+                tmpline = strcat(IMSconcat, mydatestring);
+
+                printf("%s", tmpline);
+                //IMSboolean = compareName(dirName, IMS);
+                char HAHA[256] = "Tue, 16 Feb 2016 23:55:38 GMT";
+                IMSboolean = compareName(dirName, HAHA);
+                if (IMSboolean == true){
+                    while (headerlines[b] != NULL){
+                        if (strstr(headerlines[b], "If-Modified-Since") != NULL){
+                            break;
+                        }
+                        b++;
+                    }
+                        perror("what");
+                        strcpy(headerlines[b], tmpline);
+                }
+
+                perror("hi");
+                memset(newRequestBuffer, 0, REQUEST_SIZE);
+                strcpy(newRequestBuffer, headerlines[0]);
+                strcat(newRequestBuffer, "\r\n");
+
+                while(headerlines[b] != NULL){
+                    strcat(newRequestBuffer, headerlines[b]);
+                    strcat(newRequestBuffer, "\r\n");
+                    b++;
+                }
+                strcat(newRequestBuffer, tmpline);
+                strcat(newRequestBuffer, "\r\n");
+                strcat(newRequestBuffer, "\r\n");
+
+                printf("!!!NEW REQUEST HEADER!!!\n%s", newRequestBuffer);
+                strcpy(bufferCopy, newRequestBuffer);
+                existCache = 0;
+
+                printf("~~~~~~Now the fourth case.\n");
             }
         }else{
             printf("+++++++++++++sosad! no cache!\n");
