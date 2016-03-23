@@ -19,6 +19,8 @@
 # define THREADNUM 100
 # define REQUEST_SIZE 8192
  
+pthread_mutex_t mutex;
+
 struct arguement {
     int sd;
     int browser_sd;
@@ -134,31 +136,6 @@ void* workerThread(void* args){
             printf("received fail!\n");
             pthread_exit(NULL);
         }
-        //int n = 0; 
-        //while (1) { // receive byte by byte
-            // result = recv(browser_sd, &buffer[n], 1, 0);
-            // if (n<10){
-                // printf("id[%d]\tbuffer: %s\n", id, buffer);
-            // }
-            // if (result < 0){
-                // perror("Error in receiving HTTP request!");
-                // break;
-            // }
-            // if (n > 4 && strstr(buffer, "\r\n\r\n") != NULL) {
-                // break;
-            // }
-            // n++;
-        // }
-        // buffer[n+1] = '\0';
-        // result = n;
-        // if(result < 0){
-            // close(browser_sd);
-            // printf("received fail!\n");
-            // pthread_exit(NULL);
-        // }
-        //Later when we split http request, we will change buffer, so we need to make a copy here
-        // char * requestBuffer = (char *)malloc(sizeof(char) * (result + 1));
-        // strncpy(requestBuffer, buffer, (result+1));
         memset(bufferCopy, 0, REQUEST_SIZE);
         strcpy(bufferCopy, buffer);
         printf("that's the request i got: id is [%d]\n%s", id, buffer);
@@ -194,9 +171,9 @@ void* workerThread(void* args){
                 strcpy(requestType, firstLine[0]);
                 memset(url, 0, 256);
                 strcpy(url, firstLine[1]);
-                if(strstr(firstLine[1], "html") != NULL || strstr(firstLine[1], "jpg") != NULL || 
-                    strstr(firstLine[1], "gif") != NULL || strstr(firstLine[1], "txt") != NULL || 
-                    strstr(firstLine[1], "pdf") != NULL || strstr(firstLine[1], "jpeg") != NULL) {
+                if(strcasestr(firstLine[1], "html") != NULL || strcasestr(firstLine[1], "jpg") != NULL || 
+                    strcasestr(firstLine[1], "gif") != NULL || strcasestr(firstLine[1], "txt") != NULL || 
+                    strcasestr(firstLine[1], "pdf") != NULL || strcasestr(firstLine[1], "jpeg") != NULL) {
                     supportedFileType = 1;
                 }
             }
@@ -275,6 +252,7 @@ void* workerThread(void* args){
                     printf("file not exist on cache!\n");
                 } else {
                     char block[512];
+                    pthread_mutex_lock(&mutex);
                     FILE *fp = fopen(dirName, "rb");
                     int readSize = 0;
                     do {
@@ -284,6 +262,7 @@ void* workerThread(void* args){
                             send(browser_sd, block, readSize, MSG_NOSIGNAL);
                     }while(readSize > 0);
                     fclose(fp);
+                    pthread_mutex_unlock(&mutex);
                 }
                 continue;
 
@@ -295,6 +274,7 @@ void* workerThread(void* args){
                 bool checkNeedModified = false;
                 if (checkNeedModified == true){
                     char block[512];
+                    pthread_mutex_lock(&mutex);
                     FILE *fp = fopen(dirName, "rb");
                     int readSize = 0;
                     do {
@@ -304,6 +284,7 @@ void* workerThread(void* args){
                             send(browser_sd, block, readSize, MSG_NOSIGNAL);
                     }while(readSize > 0);
                     fclose(fp);
+                    pthread_mutex_unlock(&mutex);
                 }else{
                     char responseHeader[256] = "HTTP/1.1 304 Not Modified\r\n\r\n";
                     send(browser_sd, responseHeader, 256, MSG_NOSIGNAL);
@@ -420,9 +401,9 @@ void* workerThread(void* args){
                         chunked = 1;
                     }
                     if (strstr(lines[i], "Content-Type") != NULL){
-                        if(strstr(lines[i], "html") != NULL || strstr(lines[i], "jpg") != NULL || 
-                            strstr(lines[i], "gif") != NULL || strstr(lines[i], "text") != NULL || 
-                            strstr(lines[i], "pdf") != NULL || strstr(lines[i], "jpeg") != NULL) {
+                        if(strcasestr(lines[i], "html") != NULL || strcasestr(lines[i], "jpg") != NULL || 
+                            strcasestr(lines[i], "gif") != NULL || strcasestr(lines[i], "text") != NULL || 
+                            strcasestr(lines[i], "pdf") != NULL || strcasestr(lines[i], "jpeg") != NULL) {
                             supportedFileType = 1;
                         } else {
                             supportedFileType = 0;
@@ -479,6 +460,8 @@ void* workerThread(void* args){
                     // receive web object from server and send to browser
                     char* block = malloc(sizeof(char) * 512);
                     memset(block, 0, 512);
+                    //lock the mutex, write the cache object here
+                    pthread_mutex_lock(&mutex);
                     FILE *fp = fopen(dirName, "wb");
                     fwrite(fileHeader, sizeof(char), strlen(fileHeader), fp);
                     int blockSize = 0;
@@ -506,12 +489,14 @@ void* workerThread(void* args){
                     }
                     //printf("after content loop: %d\n", contLen);
                     fclose(fp);
+                    pthread_mutex_unlock(&mutex);
                 } else if ((strstr(statCode, "304") != NULL) && supportedFileType && haveIMS && haveCache && uptodate) {
                     // Compare the IMS time with the update time of file on our proxy cache
                     // if the file on cache is most up to date, then
                     if (stat(dirName, &st) == -1){
                         printf("file not exist on cache!\n");
                     } else {
+                        pthread_mutex_lock(&mutex);
                         char block[512];
                         FILE *fp = fopen(dirName, "rb");
                         int readSize = 0;
@@ -522,6 +507,7 @@ void* workerThread(void* args){
                                 send(browser_sd, block, readSize, MSG_NOSIGNAL);
                         }while(readSize > 0);
                         fclose(fp);
+                        pthread_mutex_unlock(&mutex);
                     }
                 } else { // transfer data from server directly to browser
                     // send http response header to browser
