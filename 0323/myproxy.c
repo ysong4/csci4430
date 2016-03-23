@@ -15,15 +15,27 @@
 # include <stdbool.h> // for boolean
 # include <time.h> // for struct tm
 
-
+#define _GNU_SOURCE
 # define THREADNUM 100
 # define REQUEST_SIZE 8192
  
+pthread_mutex_t mutex;
+
 struct arguement {
     int sd;
     int browser_sd;
     int id;
 } __attribute__ ((packed));
+
+time_t get_mtime(const char *path)
+{
+    struct stat statbuf;
+    if (stat(path, &statbuf) == -1) {
+        perror(path);
+        exit(1);
+    }
+    return statbuf.st_mtime;
+}
  
 char ** splitString(char *line, int type){
     char * temp;
@@ -105,6 +117,8 @@ void* workerThread(void* args){
     int id = args2.id;
     char buffer[REQUEST_SIZE]; //= (char *)malloc(sizeof(char) * REQUEST_SIZE);
     char bufferCopy[REQUEST_SIZE];
+    char bufferAnother[REQUEST_SIZE];
+    char newRequestBuffer[REQUEST_SIZE];
 
     int checkServerConnection = 0;
     int server_sd;
@@ -121,36 +135,12 @@ void* workerThread(void* args){
         printf("received http request, size: %d\n", result);
         if(result < 0){
             close(browser_sd);
-            printf("proxy: received http request fail!\n");
+            printf("received fail!\n");
             pthread_exit(NULL);
         }
-        //int n = 0; 
-        //while (1) { // receive byte by byte
-            // result = recv(browser_sd, &buffer[n], 1, 0);
-            // if (n<10){
-                // printf("id[%d]\tbuffer: %s\n", id, buffer);
-            // }
-            // if (result < 0){
-                // perror("Error in receiving HTTP request!");
-                // break;
-            // }
-            // if (n > 4 && strstr(buffer, "\r\n\r\n") != NULL) {
-                // break;
-            // }
-            // n++;
-        // }
-        // buffer[n+1] = '\0';
-        // result = n;
-        // if(result < 0){
-            // close(browser_sd);
-            // printf("received fail!\n");
-            // pthread_exit(NULL);
-        // }
-        //Later when we split http request, we will change buffer, so we need to make a copy here
-        // char * requestBuffer = (char *)malloc(sizeof(char) * (result + 1));
-        // strncpy(requestBuffer, buffer, (result+1));
         memset(bufferCopy, 0, REQUEST_SIZE);
         strcpy(bufferCopy, buffer);
+        strcpy(bufferAnother, buffer);
         printf("that's the request i got: id is [%d]\n%s", id, buffer);
      
         //check the existence of IMS in http request
@@ -184,9 +174,9 @@ void* workerThread(void* args){
                 strcpy(requestType, firstLine[0]);
                 memset(url, 0, 256);
                 strcpy(url, firstLine[1]);
-                if(strstr(firstLine[1], "html") != NULL || strstr(firstLine[1], "jpg") != NULL || 
-                    strstr(firstLine[1], "gif") != NULL || strstr(firstLine[1], "txt") != NULL || 
-                    strstr(firstLine[1], "pdf") != NULL || strstr(firstLine[1], "jpeg") != NULL) {
+                if(strcasestr(firstLine[1], "html") != NULL || strcasestr(firstLine[1], "jpg") != NULL || 
+                    strcasestr(firstLine[1], "gif") != NULL || strcasestr(firstLine[1], "txt") != NULL || 
+                    strcasestr(firstLine[1], "pdf") != NULL || strcasestr(firstLine[1], "jpeg") != NULL) {
                     supportedFileType = 1;
                 }
             }
@@ -246,8 +236,7 @@ void* workerThread(void* args){
         if (stat(dirName, &st) == -1){
             existCache = 0;
         }else{
-            existCache = 1;
-            printf("++++++++++++++there is cache!\n");
+        existCache = 1;
         }
         // int existCache = 0;
         // char *dirName;
@@ -266,6 +255,7 @@ void* workerThread(void* args){
                     printf("file not exist on cache!\n");
                 } else {
                     char block[512];
+                    pthread_mutex_lock(&mutex);
                     FILE *fp = fopen(dirName, "rb");
                     int readSize = 0;
                     do {
@@ -275,15 +265,19 @@ void* workerThread(void* args){
                             send(browser_sd, block, readSize, MSG_NOSIGNAL);
                     }while(readSize > 0);
                     fclose(fp);
+                    pthread_mutex_unlock(&mutex);
                 }
                 continue;
+
             }
             if(haveIMS == 1 && haveCache == 0){
                 caseType = 2;
                 printf("~~~~~~Now the second case.\n");
-                bool checkNeedModified = compareName(dirName, IMS);
+                //bool checkNeedModified = compareName(dirName, IMS);
+                bool checkNeedModified = false;
                 if (checkNeedModified == true){
                     char block[512];
+                    pthread_mutex_lock(&mutex);
                     FILE *fp = fopen(dirName, "rb");
                     int readSize = 0;
                     do {
@@ -293,17 +287,46 @@ void* workerThread(void* args){
                             send(browser_sd, block, readSize, MSG_NOSIGNAL);
                     }while(readSize > 0);
                     fclose(fp);
+                    pthread_mutex_unlock(&mutex);
                 }else{
                     char responseHeader[256] = "HTTP/1.1 304 Not Modified\r\n\r\n";
                     send(browser_sd, responseHeader, 256, MSG_NOSIGNAL);
                     printf("haha+++++++++++++finished sending 304 response!\n");
                 }
-                continue;
-            }
+                continue;            }
             if(haveIMS == 0 && haveCache == 1){
                 caseType = 3;
+                char ** headerlines = splitString(bufferAnother, 0);
+            
+                struct tm* mytm;
+                char mydatestring[256];
+                char IMSconcat[256] = "If-Modified-Since: ";
+                char * tmpline;
+
+                stat(dirName, &st);
+                mytm = gmtime(&st.st_mtime);
+                strftime(mydatestring, sizeof(mydatestring), "%a, %d %b %Y %X %Z", mytm); 
+                tmpline = strcat(IMSconcat, mydatestring);
+                int b = 1;
+
+                memset(newRequestBuffer, 0, REQUEST_SIZE);
+                strcpy(newRequestBuffer, headerlines[0]);
+                strcat(newRequestBuffer, "\r\n");
+
+                while(headerlines[b] != NULL){
+                    strcat(newRequestBuffer, headerlines[b]);
+                    strcat(newRequestBuffer, "\r\n");
+                    b++;
+                }
+                strcat(newRequestBuffer, tmpline);
+                strcat(newRequestBuffer, "\r\n");
+                strcat(newRequestBuffer, "\r\n");
+
+
+                printf("%s", newRequestBuffer);
+                strcpy(bufferCopy, newRequestBuffer);
+                existCache = 0;
                 printf("~~~~~~Now the third case.\n");
-                continue;
             }
             if(haveIMS == 1 && haveCache == 1){
                 caseType = 4;
@@ -365,6 +388,7 @@ void* workerThread(void* args){
                     n++;
                 }
                 buffer[n+1] = '\0';
+                //printf("%s\n", buffer);
                 res = n;
                     
                 char statCode[10];
@@ -373,14 +397,19 @@ void* workerThread(void* args){
                 int contLen = -1;
                 char filename[23];
                 int supportedFileType = 0;
+                int uptodate = 0;
                 
                 memset(bufferCopy, 0, REQUEST_SIZE);
                 strcpy(bufferCopy, buffer);
                 lines = splitString(buffer, 0);
                 printf("id[%d]+++++this is response++++\n%s", id, bufferCopy);
+                
+                //printf("+++++this is response++++\n");
                 int i = 0;
                 while(lines[i] != NULL){
+                    
                     if (i == 0){
+                    printf("%d\t%s\n",i, lines[i]);
                         char **line = splitString(lines[i], 1);
                         memset(statCode, 0, 10);
                         strcpy(statCode, line[1]);
@@ -404,9 +433,9 @@ void* workerThread(void* args){
                         chunked = 1;
                     }
                     if (strstr(lines[i], "Content-Type") != NULL){
-                        if(strstr(lines[i], "html") != NULL || strstr(lines[i], "jpg") != NULL || 
-                            strstr(lines[i], "gif") != NULL || strstr(lines[i], "text") != NULL || 
-                            strstr(lines[i], "pdf") != NULL || strstr(lines[i], "jpeg") != NULL) {
+                        if(strcasestr(lines[i], "html") != NULL || strcasestr(lines[i], "jpg") != NULL || 
+                            strcasestr(lines[i], "gif") != NULL || strcasestr(lines[i], "text") != NULL || 
+                            strcasestr(lines[i], "pdf") != NULL || strcasestr(lines[i], "jpeg") != NULL) {
                             supportedFileType = 1;
                         } else {
                             supportedFileType = 0;
@@ -414,25 +443,36 @@ void* workerThread(void* args){
                     }
                     i++;
                 }
+                strncpy(filename, (char *)(crypt(url, "$1$00$")+6), 23);
+                for (i=0; i<22; ++i){
+                    if (filename[i] == '/'){
+                        filename[i] = '_';
+                    }
+                }
+                struct stat st = {0};
+                if (stat("./proxyFiles", &st) == -1){
+                    mkdir("./proxyFiles", 0777);
+                }
+                char partOne[] = "./proxyFiles/";
+                char * dirName;
+                //int fileExist = 0;
+                dirName = malloc((strlen(partOne)+ strlen(filename))* sizeof(char));
+                dirName = strcat(partOne, filename);
+                // Compare the IMS time with the modified time of file on our proxy cache
+                if (stat(dirName, &st) != -1){
+                    time_t file = get_mtime(dirName);
+                    //char* ims = "Sat, 02 Jan 2016 07:19:53 GMT";
+                    struct tm imsTime;
+                    strptime(IMS, "%A, %d %B %Y %H:%M:%S", &imsTime);
+                    time_t imss = mktime(&imsTime);
+                    double seconds = difftime(file, imss);
+                    if (seconds > 0) {
+                        uptodate = 1;
+                    }
+                }
                 if (strstr(statCode, "200") != NULL && supportedFileType) {
                     // get the file name and put into cache
                     //printf("url: %s\n", url);
-                    printf("CODE---200\n");
-                    strncpy(filename, (char *)(crypt(url, "$1$00$")+6), 23);
-                    for (i=0; i<22; ++i){
-                        if (filename[i] == '/'){
-                            filename[i] = '_';
-                        }
-                    }
-                    struct stat st = {0};
-                    if (stat("./proxyFiles", &st) == -1){
-                        mkdir("./proxyFiles", 0777);
-                    }
-                    char partOne[] = "./proxyFiles/";
-                    char * dirName;
-                    //int fileExist = 0;
-                    dirName = malloc((strlen(partOne)+ strlen(filename))* sizeof(char));
-                    dirName = strcat(partOne, filename);
                     // if (stat(dirName, &st) == -1){
                         // fileExist = 0;
                     // } else {
@@ -452,6 +492,8 @@ void* workerThread(void* args){
                     // receive web object from server and send to browser
                     char* block = malloc(sizeof(char) * 512);
                     memset(block, 0, 512);
+                    //lock the mutex, write the cache object here
+                    pthread_mutex_lock(&mutex);
                     FILE *fp = fopen(dirName, "wb");
                     fwrite(fileHeader, sizeof(char), strlen(fileHeader), fp);
                     int blockSize = 0;
@@ -459,7 +501,6 @@ void* workerThread(void* args){
                     if(res<0)
                         perror("Error writing to socket");
                     else{
-                        printf("2222\n");
                         do {
                             memset(block, 0, 512);
                             blockSize = recv(server_sd,block,512,0);
@@ -470,7 +511,7 @@ void* workerThread(void* args){
                             {
                                 perror("File write failed on server.\n");
                             }
-                            printf("contLen: %d\n", contLen);
+                            //printf("contLen: %d\n", contLen);
                             contLen -= blockSize;
                             if (contLen <= 0)
                             {
@@ -478,39 +519,27 @@ void* workerThread(void* args){
                             }
                         }while(blockSize >= 0);
                     }
-                    printf("after content loop: %d\n", contLen);
+                    //printf("after content loop: %d\n", contLen);
                     fclose(fp);
-                } else if ((strstr(statCode, "304") != NULL) && supportedFileType && haveIMS && haveCache) {
-                    // one more check: Compare the IMS time with the update time of file on our proxy cache
+                    pthread_mutex_unlock(&mutex);
+                } else if ((strstr(statCode, "304") != NULL) && supportedFileType && haveIMS && haveCache && uptodate) {
+                    // Compare the IMS time with the update time of file on our proxy cache
                     // if the file on cache is most up to date, then
-                    printf("CODE---304\n");
-                    if (1) {
-                        printf("\ntest here!\n");
-                        strncpy(filename, (char *)(crypt(url, "$1$00$")+6), 23);
-                        for (i=0; i<22; ++i){
-                            if (filename[i] == '/'){
-                                filename[i] = '_';
-                            }
-                        }
-                        struct stat st = {0};
-                        char partOne[] = "./proxyFiles/";
-                        char * dirName;
-                        dirName = malloc((strlen(partOne)+ strlen(filename))* sizeof(char));
-                        dirName = strcat(partOne, filename);
-                        if (stat(dirName, &st) == -1){
-                            printf("file not exist on cache!\n");
-                        } else {
-                            char block[512];
-                            FILE *fp = fopen(dirName, "rb");
-                            int readSize = 0;
-                            do {
-                                memset(block, 0, 512);
-                                readSize = fread(block, sizeof(char), 512, fp);
-                                if(!(readSize<=0))
-                                    send(browser_sd, block, readSize, MSG_NOSIGNAL);
-                            }while(readSize > 0);
-                            fclose(fp);
-                        }
+                    if (stat(dirName, &st) == -1){
+                        printf("file not exist on cache!\n");
+                    } else {
+                        pthread_mutex_lock(&mutex);
+                        char block[512];
+                        FILE *fp = fopen(dirName, "rb");
+                        int readSize = 0;
+                        do {
+                            memset(block, 0, 512);
+                            readSize = fread(block, sizeof(char), 512, fp);
+                            if(!(readSize<=0))
+                                send(browser_sd, block, readSize, MSG_NOSIGNAL);
+                        }while(readSize > 0);
+                        fclose(fp);
+                        pthread_mutex_unlock(&mutex);
                     }
                 } else { // transfer data from server directly to browser
                     // send http response header to browser
@@ -539,6 +568,8 @@ void* workerThread(void* args){
                     continue;
                 }
             }
+            close(server_sd);
+            printf("Connection closed\n");
         }
     }
         
