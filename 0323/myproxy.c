@@ -16,7 +16,6 @@
 # include <stdbool.h> // for boolean
 # include <time.h> // for struct tm
 
-
 # define THREADNUM 100
 # define REQUEST_SIZE 8192
  
@@ -562,10 +561,13 @@ void* workerThread(void* args){
                                 perror("File write failed on server.\n");
                             }
                             //printf("contLen: %d\n", contLen);
-                            contLen -= blockSize;
-                            if (contLen <= 0)
-                            {
-                                break;
+                            if (contLen != -1) {
+                                contLen -= blockSize;
+                                if (contLen <= 0)
+                                    break;
+                            }else { 
+                                if(strstr(block, "\r\n0\r\n\r\n") != NULL || blockSize < 14)
+                                    break;
                             }
                         }while(blockSize >= 0);
                     }
@@ -607,6 +609,12 @@ void* workerThread(void* args){
                         }while(res>0);
                     }
                 }
+                // 304 break both two connection
+                if (strstr(statCode, "304") != NULL) {
+                    printf("close both browser and server connection\n");
+                    close(server_sd);
+                    break;
+                }
                 if (haveClose == 1){
                     printf("close server connection, maintain browser connection\n");
                     close(server_sd);
@@ -618,19 +626,10 @@ void* workerThread(void* args){
                     continue;
                 }
             }
-            close(server_sd);
-            printf("Connection closed\n");
         }
     }
         
     // printf("Connection closed\n");
-
- 
-    //free(lines);
-    //free(buffer);
-    //free(requestBuffer);
-    //printf("Haha successful connection!\n");
- 
     close(browser_sd);
     pthread_exit(NULL);
 }
