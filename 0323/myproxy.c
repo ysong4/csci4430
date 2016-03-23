@@ -87,7 +87,7 @@ bool compareName(char* fileName, char* inDate){
     tm = gmtime(&st.st_mtime);
     strftime(datestring, sizeof(datestring), "%a, %d %b %Y %X %Z", tm); 
 
-    // printf("%s\n",datestring);
+    // printf("\nLast modified time: %s\n",datestring);
     tm1 = *tm;
     strptime(inDate, "%a, %d %b %Y %X %Z", &tm2);
     // printf("%s\n", inDate);
@@ -149,6 +149,7 @@ void* workerThread(void* args){
         int haveCache = 0;
         //check the existence of keep-alive in http request
         int haveKeepAlive = 0;
+        int caseFourOverwriteIMS = 0;
      
         //pointer for important information in http request
         char **firstLine;
@@ -156,14 +157,14 @@ void* workerThread(void* args){
         char **cacheLine;
         char **imsLine;
         char requestType[10]; // get or post
-        char url[256];
+        char url[1024];
         char hostname[256];
         char IMS[256];// If-modified-since
         int supportedFileType = 0;
         
         //split the http request
         char ** lines = splitString(buffer, 0);
-
+ 
         int i = 0;
         while(lines[i] != NULL){
             //get the first line of http request, get the request url
@@ -172,11 +173,11 @@ void* workerThread(void* args){
                 //requested object will be in firstLine[1]
                 memset(requestType, 0, 10);
                 strcpy(requestType, firstLine[0]);
-                memset(url, 0, 256);
+                memset(url, 0, 1024);
                 strcpy(url, firstLine[1]);
-                if(strcasestr(firstLine[1], "html") != NULL || strcasestr(firstLine[1], "jpg") != NULL || 
-                    strcasestr(firstLine[1], "gif") != NULL || strcasestr(firstLine[1], "txt") != NULL || 
-                    strcasestr(firstLine[1], "pdf") != NULL || strcasestr(firstLine[1], "jpeg") != NULL) {
+                if(strcasestr(firstLine[1], ".html") != NULL || strcasestr(firstLine[1], ".jpg") != NULL || 
+                    strcasestr(firstLine[1], ".gif") != NULL || strcasestr(firstLine[1], ".txt") != NULL || 
+                    strcasestr(firstLine[1], ".pdf") != NULL || strcasestr(firstLine[1], ".jpeg") != NULL) {
                     supportedFileType = 1;
                 }
             }
@@ -238,12 +239,7 @@ void* workerThread(void* args){
         }else{
         existCache = 1;
         }
-        // int existCache = 0;
-        // char *dirName;
 
-        haveIMS = 1;
-        haveCache = 1;
-        existCache = 1;
         // the request have already cached on the proxy
         int caseType = 0;
         if(existCache == 1 && supportedFileType == 1){
@@ -292,7 +288,11 @@ void* workerThread(void* args){
                 }else{
                     char responseHeader[256] = "HTTP/1.1 304 Not Modified\r\n\r\n";
                     send(browser_sd, responseHeader, 256, MSG_NOSIGNAL);
-                    printf("haha+++++++++++++finished sending 304 response!\n");
+                    //printf("haha+++++++++++++finished sending 304 response!\n");
+                    if(checkServerConnection == 1){
+                        close(server_sd);
+                    }
+                    break;
                 }
                 continue;            
             }else if(haveIMS == 0 && haveCache == 1){
@@ -347,40 +347,37 @@ void* workerThread(void* args){
                 strftime(mydatestring, sizeof(mydatestring), "%a, %d %b %Y %X %Z", tmbaby); 
                 tmpline = strcat(IMSconcat, mydatestring);
 
-                printf("%s", tmpline);
-                //IMSboolean = compareName(dirName, IMS);
-                char HAHA[256] = "Tue, 16 Feb 2016 23:55:38 GMT";
+                printf("%s\n", tmpline);
+                IMSboolean = compareName(dirName, IMS);
+                // char HAHA[256] = "Tue, 16 Feb 2016 23:55:38 GMT";
+                // printf("IMS: %s\n", HAHA);
                 IMSboolean = compareName(dirName, HAHA);
                 if (IMSboolean == true){
+                    caseFourOverwriteIMS = 1;
                     while (headerlines[b] != NULL){
                         if (strstr(headerlines[b], "If-Modified-Since") != NULL){
                             break;
                         }
                         b++;
                     }
-                        perror("what");
-                        strcpy(headerlines[b], tmpline);
+                    headerlines[b] = tmpline;
                 }
 
-                perror("hi");
                 memset(newRequestBuffer, 0, REQUEST_SIZE);
                 strcpy(newRequestBuffer, headerlines[0]);
                 strcat(newRequestBuffer, "\r\n");
 
+                b = 1;
                 while(headerlines[b] != NULL){
                     strcat(newRequestBuffer, headerlines[b]);
                     strcat(newRequestBuffer, "\r\n");
                     b++;
                 }
-                strcat(newRequestBuffer, tmpline);
-                strcat(newRequestBuffer, "\r\n");
                 strcat(newRequestBuffer, "\r\n");
 
-                printf("!!!NEW REQUEST HEADER!!!\n%s", newRequestBuffer);
+                //printf("!!!NEW REQUEST HEADER!!!\n%s", newRequestBuffer);
                 strcpy(bufferCopy, newRequestBuffer);
                 existCache = 0;
-
-                printf("~~~~~~Now the fourth case.\n");
             }
         }else{
             printf("+++++++++++++sosad! no cache!\n");
@@ -574,7 +571,7 @@ void* workerThread(void* args){
                     //printf("after content loop: %d\n", contLen);
                     fclose(fp);
                     pthread_mutex_unlock(&mutex);
-                } else if ((strstr(statCode, "304") != NULL) && supportedFileType && haveIMS && haveCache && uptodate) {
+                } else if ((strstr(statCode, "304") != NULL) && (caseType == 3 || caseFourOverwriteIMS == 1)) {
                     // Compare the IMS time with the update time of file on our proxy cache
                     // if the file on cache is most up to date, then
                     if (stat(dirName, &st) == -1){
