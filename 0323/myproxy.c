@@ -351,7 +351,7 @@ void* workerThread(void* args){
                 IMSboolean = compareName(dirName, IMS);
                 // char HAHA[256] = "Tue, 16 Feb 2016 23:55:38 GMT";
                 // printf("IMS: %s\n", HAHA);
-                IMSboolean = compareName(dirName, HAHA);
+                //IMSboolean = compareName(dirName, HAHA);
                 if (IMSboolean == true){
                     caseFourOverwriteIMS = 1;
                     while (headerlines[b] != NULL){
