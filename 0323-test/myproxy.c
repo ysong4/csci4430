@@ -16,7 +16,7 @@
 # include <stdbool.h> // for boolean
 # include <time.h> // for struct tm
 
-# define THREADNUM 100
+# define THREADNUM 1000
 # define REQUEST_SIZE 8192
  
 pthread_mutex_t mutex;
@@ -132,7 +132,7 @@ void* workerThread(void* args){
         if (result == 0){
             continue;
         }
-        printf("received http request, size: %d\n", result);
+        //printf("received http request, size: %d\n", result);
         if(result < 0){
             close(browser_sd);
             printf("received fail!\n");
@@ -150,7 +150,7 @@ void* workerThread(void* args){
         strcpy(bufferB, bufferA);
         memset(bufferC, 0, REQUEST_SIZE);
         strcpy(bufferC, bufferA);
-        printf("that's the request i got: id is [%d]\n%s", id, bufferA);
+        printf("\n+++++++that's the request i got: id is [%d]\n\n%s", id, bufferA);
      
         //check the existence of IMS in http request
         int haveIMS = 0;
@@ -256,7 +256,7 @@ void* workerThread(void* args){
         // the request have already cached on the proxy
         int caseType = 0;
         if(existCache == 1 && supportedFileType == 1){
-            printf("+++++++++++++yoyo! already cached!\n");
+            printf("~~~~~Proxy: Already cached!\n");
             if(haveIMS == 0 && haveCache == 0){
                 // send back the web object.
                 // find the cached object, find out its size
@@ -340,7 +340,6 @@ void* workerThread(void* args){
                 printf("%s", requestBuffer);
                 strcpy(bufferB, requestBuffer);
 
-                haveIMS = 1;
                 existCache = 0;
             }else if(haveIMS == 1 && haveCache == 1){
                 printf("~~~~~~Now the fourth case.\n");
@@ -392,11 +391,13 @@ void* workerThread(void* args){
                 strcpy(bufferB, requestBuffer);
                 existCache = 0;
             }
+        }else if(existCache == 0){
+            printf("~~~~~~Proxy: Have no cache.\n");
         }
         
         // Requested object isn't cached on the proxy, so pass the request to web server.
         if (existCache == 0){
-            printf("+++++++++++++sosad! no cache!\n");
+            printf("\n");
 
             if (checkServerConnection == 0){
                 struct hostent *hp;
@@ -415,6 +416,7 @@ void* workerThread(void* args){
                 // }
                 if(connect(server_sd,(struct sockaddr*)&addr,sizeof(struct sockaddr_in)) < 0){
                     printf("Error in connecting to remote server\n");
+                    break;
                 } else {
                     checkServerConnection = 1;
                     printf("Connected to %s  IP - %s\n",firstLine[1], inet_ntoa(addr.sin_addr));
@@ -458,14 +460,14 @@ void* workerThread(void* args){
                 memset(bufferB, 0, REQUEST_SIZE);
                 strcpy(bufferB, bufferA);
                 lines = splitString(bufferA, 0);
-                printf("id[%d]+++++this is response++++\n%s", id, bufferB);
+                printf("\nid[%d]+++++this is response++++\n\n%s", id, bufferB);
                 
                 //printf("+++++this is response++++\n");
                 int i = 0;
                 while(lines[i] != NULL){
                     
                     if (i == 0){
-                    printf("%d\t%s\n",i, lines[i]);
+                    //printf("%d\t%s\n",i, lines[i]);
                         char **line = splitString(lines[i], 1);
                         memset(statCode, 0, 10);
                         strcpy(statCode, line[1]);
@@ -604,7 +606,7 @@ void* workerThread(void* args){
                     }
                 } else { // transfer data from server directly to browser
                     // send http response header to browser
-                    printf("\nsend it anyway!!\n");
+                    printf("\nsend it anyway!!\nid is %d\n", id);
                     res = send(browser_sd, bufferB, strlen(bufferB), MSG_NOSIGNAL);
                     //printf("\n%s\n",bufferA);
                     char block[512];
@@ -621,17 +623,17 @@ void* workerThread(void* args){
                 }
                 // 304 break both two connection
                 if (strstr(statCode, "304") != NULL) {
-                    printf("close both browser and server connection\n");
+                    //printf("~~~~~~~~Proxy: close both browser and server connection\n");
                     close(server_sd);
                     break;
                 }
                 if (haveClose == 1){
-                    printf("close server connection, maintain browser connection\n");
+                    printf("~~~~~~~~Proxy: close server connection, maintain browser connection\nid is: %d\n\n", id);
                     close(server_sd);
                     continue;
                 }
                 else{
-                    printf("maintain two connection\n");
+                    printf("~~~~~~~~Proxy: maintain two connection\nid is: %d\n\n", id);
                     checkServerConnection = 1;
                     continue;
                 }
@@ -639,7 +641,7 @@ void* workerThread(void* args){
         }
     }
         
-    // printf("Connection closed\n");
+    printf("\n~~~~~~~~Proxy: Browser-Proxy Connection closed\n~~~~id: %d\n\n", id);
     close(browser_sd);
     pthread_exit(NULL);
 }
